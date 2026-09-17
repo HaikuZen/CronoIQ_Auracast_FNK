@@ -115,6 +115,29 @@ bool app_config_load(const char *path, AppConfig &out_config) {
             (uint8_t)json_get_number(display, "brightness_pct", out_config.display.brightness_pct);
     }
 
+    const cJSON *smart_lights = cJSON_GetObjectItemCaseSensitive(root, "smart_lights");
+    if (cJSON_IsArray(smart_lights)) {
+        const cJSON *light = nullptr;
+        cJSON_ArrayForEach(light, smart_lights) {
+            if (!cJSON_IsObject(light)) continue;
+            SmartLightConfig lc;
+            lc.name = json_get_string(light, "name", "Light");
+            lc.brand = json_get_string(light, "brand", "WiZ");
+            lc.ip = json_get_string(light, "ip", "");
+            lc.udp_port = (uint16_t)json_get_number(light, "udp_port", 38899);
+            if (lc.ip.empty()) {
+                ESP_LOGW(TAG, "smart_lights entry \"%s\" has no ip — skipping", lc.name.c_str());
+                continue;
+            }
+            if (lc.brand != "WiZ") {
+                ESP_LOGW(TAG, "smart_lights entry \"%s\": brand \"%s\" is not implemented yet — "
+                              "will show as offline",
+                         lc.name.c_str(), lc.brand.c_str());
+            }
+            out_config.smart_lights.push_back(lc);
+        }
+    }
+
     cJSON_Delete(root);
 
     if (out_config.wifi.ssid.empty()) {
@@ -123,10 +146,14 @@ bool app_config_load(const char *path, AppConfig &out_config) {
     if (out_config.weather.api_key.empty()) {
         ESP_LOGW(TAG, "No weather.api_key configured — weather page will stay empty");
     }
+    if (out_config.smart_lights.empty()) {
+        ESP_LOGW(TAG, "No smart_lights configured — Smart Lights page will stay empty");
+    }
 
-    ESP_LOGI(TAG, "Config loaded: ssid=\"%s\" tz=\"%s\" weather=%s@%.4f,%.4f days=%d",
+    ESP_LOGI(TAG, "Config loaded: ssid=\"%s\" tz=\"%s\" weather=%s@%.4f,%.4f days=%d lights=%u",
              out_config.wifi.ssid.c_str(), out_config.ntp.posix_tz.c_str(),
              out_config.weather.location.name.c_str(), out_config.weather.location.latitude,
-             out_config.weather.location.longitude, out_config.weather.forecast_days);
+             out_config.weather.location.longitude, out_config.weather.forecast_days,
+             (unsigned)out_config.smart_lights.size());
     return true;
 }

@@ -5,7 +5,7 @@ GT911 capacitive touch), built on ESP-IDF + LVGL v9. Configuration lives on
 an SD card, so Wi-Fi credentials, timezone, and weather provider settings
 never need a firmware rebuild.
 
-The UI is a top tab bar with two pages:
+The UI is a top tab bar with three pages:
 
 - **Clock** — weekday (row 1), date (row 2), a 7-segment-style `HH:MM:ss`
   clock in the middle, a Wi-Fi/NTP status row at the bottom, and the current
@@ -14,6 +14,15 @@ The UI is a top tab bar with two pages:
   location) plus a horizontally scrollable row of forecast day cards, using
   [Visual Crossing](https://www.visualcrossing.com/) as the first supported
   provider.
+- **Smart Lights** — a status card per configured light (name, on/off,
+  brightness, an approximate color swatch), polled over UDP, using
+  [WiZ](https://www.wizconnected.com/) as the first supported brand. Tap a
+  card to select it and open a control panel below: a power switch, a
+  brightness slider, a dropdown of WiZ's 32 built-in dynamic scenes (Ocean,
+  Party, Fireplace, ...), and a row of color presets. Controls are
+  brand-aware — a light whose brand isn't implemented yet still shows its
+  status card, but selecting it shows a "no controls available" message
+  instead of the WiZ panel.
 
 ## Hardware
 
@@ -82,7 +91,21 @@ Wi-Fi and weather stay off) rather than refusing to start.
   },
   "display": {
     "brightness_pct": 100
-  }
+  },
+  "smart_lights": [
+    {
+      "name": "Living Room",
+      "brand": "WiZ",
+      "ip": "192.168.1.50",
+      "udp_port": 38899
+    },
+    {
+      "name": "Bedroom",
+      "brand": "WiZ",
+      "ip": "192.168.1.51",
+      "udp_port": 38899
+    }
+  ]
 }
 ```
 
@@ -99,6 +122,10 @@ Wi-Fi and weather stay off) rather than refusing to start.
 | `weather.location.name` | Freeform label shown on the Weather page. |
 | `weather.location.latitude` / `longitude` | Decimal degrees, passed straight to the API. |
 | `display.brightness_pct` | Reserved for future backlight-dimming support (currently informational only — backlight is driven full-on). |
+| `smart_lights[].name` | Freeform label shown on the Smart Lights page. |
+| `smart_lights[].brand` | Only `"WiZ"` is implemented in this release; other values are still shown on the page, always reported as offline. |
+| `smart_lights[].ip` | The light's IP address on your LAN (a static/reserved DHCP lease is strongly recommended — there's no discovery, this is used directly). |
+| `smart_lights[].udp_port` | UDP port the light listens on; WiZ's default is `38899`. |
 
 ## Project layout
 
@@ -110,13 +137,15 @@ main/
   wifi_manager.{h,cpp}                         — Wi-Fi STA + reconnect
   time_manager.{h,cpp}                         — SNTP + local time formatting
   weather_service.{h,cpp}                      — Visual Crossing HTTP client + JSON parsing
+  smart_lights_service.{h,cpp}                 — WiZ UDP polling + JSON parsing
   main.cpp                                     — app_main: wires everything together
   ui/
-    seven_segment.{h,cpp}   — LED-style 7-segment digit/colon widget (no font assets)
-    weather_icons.{h,cpp}   — vector-drawn weather icons (no image assets)
-    page_clock.{h,cpp}      — Clock page
-    page_weather.{h,cpp}    — Weather page
-    ui_manager.{h,cpp}      — top tabview, ties pages + 1Hz clock tick together
+    seven_segment.{h,cpp}      — LED-style 7-segment digit/colon widget (no font assets)
+    weather_icons.{h,cpp}      — vector-drawn weather icons (no image assets)
+    page_clock.{h,cpp}         — Clock page
+    page_weather.{h,cpp}       — Weather page
+    page_smart_lights.{h,cpp}  — Smart Lights page
+    ui_manager.{h,cpp}         — top tabview, ties pages + 1Hz clock tick together
 sdcard/config_crono.json    — example config to copy onto the SD card
 partitions.csv              — custom partition table (4MB app, no OTA)
 ```
@@ -134,13 +163,38 @@ partitions.csv              — custom partition table (4MB app, no OTA)
   app background color (`WEATHER_ICON_BG_HEX` in `weather_icons.h`) — every
   page must use that same background for the illusion to hold.
 - **Threading**: the clock page refreshes once a second via an `lv_timer`
-  (runs on the LVGL task, no locking needed). Weather fetches run on a
-  separate FreeRTOS task and push updates into the UI through
-  `ui_manager_update_weather`, which takes the `esp_lvgl_port` lock itself.
+  (runs on the LVGL task, no locking needed). Weather fetches and smart
+  light polling each run on their own separate FreeRTOS task and push
+  updates into the UI through `ui_manager_update_weather` /
+  `ui_manager_update_smart_lights`, which take the `esp_lvgl_port` lock
+  themselves.
 - Extending to another weather provider: add a case in `app_config.cpp`'s
   provider handling and a new fetch/parse path in `weather_service.cpp`
   behind `cfg.provider`; `WeatherData` is provider-agnostic so the UI layer
   needs no changes.
+- **Smart Lights / WiZ**: status is polled every 5 seconds over UDP (plain
+  `lwip/sockets.h` BSD sockets, no extra component needed — `lwip` is
+  already a build dependency). WiZ's `getPilot` request/response is a
+  small unauthenticated JSON protocol; no discovery is implemented, so each
+  light's IP must be given directly in config (a static/reserved DHCP lease
+  is recommended). Extending to another brand follows the same
+  provider-agnostic pattern as weather — see `CLAUDE.md`.
+- **Smart Lights controls**: tapping a card sends `wiz_set_power` /
+  `wiz_set_brightness` / `wiz_set_color` / `wiz_set_scene`
+  (`smart_lights_service.cpp`) — a single fire-and-forget UDP send with no
+  reply wait, safe to call directly from the LVGL event callback since it's
+  not the multi-step round trip the status poll is. The UI doesn't
+  optimistically show the new state; it waits for the next 5s poll to
+  confirm what actually happened, which is simpler and more honest than
+  guessing.
+- **WiZ scenes**: the scene dropdown lists WiZ's 32 built-in dynamic scenes
+  (`kSceneNames` in `page_smart_lights.cpp`), in the well-known
+  scene-ID-order shared by WiZ's own app and third-party integrations —
+  option index == scene ID, with index 0 a "Color / Custom" sentinel
+  (never sent) representing "not currently running a scene". The dropdown
+  reflects the light's actual `sceneId` from its last poll (0 when it's in
+  plain color/CCT mode), so it stays in sync with changes made from
+  elsewhere (the WiZ app, etc.), not just from this device.
 
 ## Known gaps / next steps
 
@@ -148,7 +202,24 @@ partitions.csv              — custom partition table (4MB app, no OTA)
   backlight (the FNK0115 bring-up drives `TFT_BL` as a plain digital pin).
 - Only Visual Crossing is implemented; other providers are stubbed at the
   config schema level only.
+- Only WiZ is implemented for Smart Lights; other brands (e.g. Philips Hue,
+  which needs a bridge and auth rather than direct UDP) are stubbed at the
+  config schema level only, always show as offline, and show a "no
+  controls available" message instead of the control panel when selected.
 - The SD card SPI pinout and the full clock+weather flow are confirmed on
   one physical FNK0115L_4_3_IPS unit; if you're on the 5.0" variant
   (FNK0115Q_5_0_IPS) or a different card slot wiring, re-verify rather than
-  assume.
+  assume. **The Smart Lights feature — status poll, power/brightness/color
+  controls, and scene selection — has not yet been tested against a
+  real WiZ bulb**: the `getPilot`/`setPilot` request/response shapes and
+  the scene-ID-to-name mapping follow WiZ's publicly documented protocol,
+  but haven't been confirmed against
+  actual hardware the way the rest of this project has.
+- **Reported crash, fixed but not yet re-confirmed**: swiping used to reset
+  the board with `A stack overflow in task taskLVGL has been detected.`
+  The LVGL render task's stack (`lvgl_display.cpp`, `lvgl_port_setup()`)
+  was raised from `6144` to `16384` bytes — the Smart Lights page's
+  dropdown/sliders/nested scrolling almost certainly pushed a swipe's
+  gesture handling past the old, guide-demo-sized stack. See `CLAUDE.md`'s
+  "Build / flash" section for the reasoning; please confirm swiping no
+  longer crashes after reflashing.

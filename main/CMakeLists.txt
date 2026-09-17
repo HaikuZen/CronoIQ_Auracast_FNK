@@ -7,10 +7,12 @@ idf_component_register(
         "wifi_manager.cpp"
         "time_manager.cpp"
         "weather_service.cpp"
+        "smart_lights_service.cpp"
         "ui/seven_segment.cpp"
         "ui/weather_icons.cpp"
         "ui/page_clock.cpp"
         "ui/page_weather.cpp"
+        "ui/page_smart_lights.cpp"
         "ui/ui_manager.cpp"
     INCLUDE_DIRS
         "."

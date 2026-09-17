@@ -21,5 +21,19 @@
   },
   "display": {
     "brightness_pct": 100
-  }
+  },
+  "smart_lights": [
+    {
+      "name": "Living Room",
+      "brand": "WiZ",
+      "ip": "192.168.1.50",
+      "udp_port": 38899
+    },
+    {
+      "name": "Bedroom",
+      "brand": "WiZ",
+      "ip": "192.168.1.51",
+      "udp_port": 38899
+    }
+  ]
 }

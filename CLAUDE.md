@@ -6,11 +6,17 @@ Guidance for Claude Code (or any agent) working in this repository.
 
 CronoIQ: an ESP-IDF (v5.3+, developed against v6.1) + LVGL v9 smart-clock
 firmware for the Freenove FNK0115 (ESP32-S3, 800×480 RGB panel, GT911
-touch). Two tab pages: Clock (weekday/date/7-segment time/Wi-Fi+NTP status,
-plus a small current-weather icon) and Weather (current conditions +
-forecast cards). Configuration (Wi-Fi, NTP, weather provider/location) is
-read from `/sdcard/config_crono.json` at boot — see `README.md` for the
-schema.
+touch). Three tab pages: Clock (weekday/date/7-segment time/Wi-Fi+NTP
+status, plus a small current-weather icon), Weather (current conditions +
+forecast cards), and Smart Lights (a status card per configured light —
+name, on/off, brightness, approximate color — polled over UDP, WiZ being
+the first supported brand; tap a card to select it and open a control
+panel below with a power switch, brightness slider, a dropdown of WiZ's 32
+built-in dynamic scenes, and color presets, brand-aware so an unimplemented
+brand shows a "no controls" message instead). Configuration (Wi-Fi, NTP,
+weather provider/location, smart
+light list) is read from `/sdcard/config_crono.json` at boot — see
+`README.md` for the schema.
 
 `Agent_FNK0115_new_ESP-IDF.md` in the repo root is the source bring-up
 recipe this project's display/touch layer (`main/lvgl_display.{h,cpp}`,
@@ -45,6 +51,26 @@ This root cause and fix apply to any ESP-IDF project using
 `esp_lcd_touch_gt911`, not just this one — see `Agent_GT911.md` in the repo
 root for the portable, project-agnostic writeup (symptom log, fix, why it
 works, and a troubleshooting checklist for when it isn't the whole story).
+
+A second deviation, also a real hardware crash fix: `lvgl_port_setup()`'s
+`task_stack` was raised from `6144` (the guide's own value, sized for its
+trivial one-screen touch/coordinate demo) to `16384`. Reported symptom on
+real hardware: swiping reset the board with
+`***ERROR*** A stack overflow in task taskLVGL has been detected.` —
+`taskLVGL` is exactly the name `esp_lvgl_port` gives this task
+(`esp_lvgl_port.c`'s `xTaskCreateWithCaps(lvgl_port_task, "taskLVGL", ...)`),
+so this is squarely a stack-too-small crash, not a display/panel/touch bug.
+The Smart Lights page added since the guide's demo screen — an
+`lv_dropdown` (builds an internal popup list + scrollbar with a heavier
+layout pass), sliders, and multiple nested scrollable containers (the
+light grid and the control panel both scroll) — is almost certainly what
+pushed a swipe's gesture-propagation call chain past 6KB; even
+`esp_lvgl_port`'s own `LVGL_PORT_INIT_CONFIG()` default is `7168`, already
+above what this project had. **Not yet re-confirmed on hardware** — if a
+swipe still crashes after reflashing with this change, the actual overflow
+is deeper than assumed here and `task_stack` needs raising further (watch
+`esp_lvgl_port`'s task in a stack high-water-mark check, or just double it
+again), not reverted.
 
 ## Build / flash
 
@@ -159,16 +185,60 @@ Two more things worth knowing even though they didn't cause a failure:
   objects from outside the LVGL task (i.e. not from an `lv_timer` callback)
   must take that same lock — this is the one concurrency rule in the
   codebase that will crash/corrupt the UI if skipped.
-- **NTP and weather both wait for Wi-Fi themselves, on their own
-  background tasks.** `time_manager_start()` spawns a task that polls
+- **NTP, weather, and smart lights all wait for Wi-Fi themselves, on their
+  own background tasks.** `time_manager_start()` spawns a task that polls
   `wifi_manager_is_connected()` before calling `esp_netif_sntp_init()`;
-  `weather_service_start()`'s task does the same before each fetch. This
-  keeps `app_main()` non-blocking — `wifi_manager_start()`,
-  `time_manager_start()`, and `weather_service_start()` can all be called
-  back-to-back in `main.cpp` regardless of how long the Wi-Fi handshake
-  takes. If you add another network-dependent service, follow the same
-  pattern rather than assuming Wi-Fi is already up by the time your code
-  runs.
+  `weather_service_start()`'s and `smart_lights_service_start()`'s tasks do
+  the same before their first fetch/poll. This keeps `app_main()`
+  non-blocking — `wifi_manager_start()`, `time_manager_start()`,
+  `weather_service_start()`, and `smart_lights_service_start()` can all be
+  called back-to-back in `main.cpp` regardless of how long the Wi-Fi
+  handshake takes. If you add another network-dependent service, follow
+  the same pattern rather than assuming Wi-Fi is already up by the time
+  your code runs.
+- **Smart lights are polled over plain UDP sockets (`lwip/sockets.h`), not
+  `esp_http_client`.** WiZ's protocol is a small unauthenticated
+  JSON-over-UDP exchange (`getPilot` request → `result` object in the
+  reply) on port 38899 by default — no HTTP, no TLS, no discovery. Each
+  poll cycle (`smart_lights_service.cpp`, every 5s) opens one UDP socket
+  per configured light with a 1s `SO_RCVTIMEO`, sends, receives, and closes
+  it; a timeout or malformed reply just leaves that light reported as
+  `online = false` for that cycle rather than failing the whole poll. This
+  has **not** been tested against real WiZ hardware (see `README.md`'s
+  Known gaps) — the request/response shape follows WiZ's publicly
+  documented protocol, not something confirmed on-device the way the rest
+  of this project has been.
+- **Smart light controls (`wiz_set_power`/`wiz_set_brightness`/
+  `wiz_set_color`/`wiz_set_scene` in `smart_lights_service.cpp`) are
+  fire-and-forget: a single non-blocking UDP send, no reply read.** This is
+  why `page_smart_lights.cpp`'s power switch/slider/scene-dropdown/
+  color-button event callbacks call them directly and synchronously —
+  unlike the weather/
+  status-poll callbacks into `ui_manager`, these do **not** need
+  `lvgl_port_lock()` for the network call itself (they're already running
+  on the LVGL task, inside an LVGL event callback, and the UDP send is a
+  single quick syscall) — don't add locking there, and don't turn these
+  into a background-task+callback round trip like the status poll; that
+  would just add latency for no benefit since we never read a reply
+  anyway. The UI doesn't optimistically show the new state after sending a
+  command — it waits for the next 5s poll (`page_smart_lights_update`) to
+  reflect whatever the light's state actually became. One accepted
+  side-effect: `rebuild_control_panel()` runs on every poll refresh (to
+  reflect externally-changed state), which will interrupt an in-progress
+  brightness-slider drag if a poll lands at that exact moment.
+- **The WiZ scene dropdown's option index is its scene ID, by
+  construction.** `kSceneNames` in `page_smart_lights.cpp` is a single
+  `\n`-joined string in scene-ID order (1-32, the mapping shared by WiZ's
+  own app and third-party integrations like pywizlight) with a sentinel
+  `"Color / Custom"` prepended at index 0 meaning "not running a scene" —
+  so option index *is* the scene ID for every real entry, no separate
+  lookup table. If you ever reorder or insert into that string, the
+  dropdown-selection → `wiz_set_scene()` call breaks silently (wrong scene
+  applied) rather than failing loudly — append-only, or update the ID
+  math in `scene_dropdown_event_cb()`/`light.scene_id` handling together
+  with the string. `LightStatus.scene_id` (parsed from `getPilot`'s
+  `sceneId` in `poll_wiz()`) is 0 when the light is in plain color/CCT
+  mode, matching the sentinel.
 - **Config parsing never hard-fails.** `app_config_load` logs and returns
   `false` on any problem (missing card, missing file, bad JSON, missing
   sub-object) and leaves `AppConfig` at its struct-default values; `main.cpp`
@@ -193,6 +263,33 @@ To add one:
 3. Don't touch `main/ui/page_weather.cpp` or `page_clock.cpp` — they only
    ever see the normalized `WeatherData`/`WeatherDay` structs.
 
+## Adding a second smart light brand
+
+`SmartLightConfig.brand` and `LightStatus` are already brand-agnostic,
+mirroring the weather provider pattern above. To add one (e.g. Philips
+Hue, which — unlike WiZ — needs bridge discovery/pairing and an API token,
+so expect a bigger config schema addition than WiZ needed):
+
+1. Extend the `smart_lights[]` schema in `README.md` /
+   `sdcard/config_crono.json` / `app_config.cpp` only if the new brand
+   needs fields WiZ doesn't have (e.g. a bridge IP + auth token for Hue).
+2. In `smart_lights_service.cpp`, branch on `light.brand` in
+   `smart_lights_task()` to call a different poll function for that brand,
+   producing a `LightStatus` the same way `poll_wiz()` does; add matching
+   `set_power`/`set_brightness`/`set_color`/`set_scene`-style control
+   functions for that brand (fire-and-forget send, same shape as
+   `wiz_set_power()` et al. — or a different transport entirely if the
+   brand needs one, e.g. Hue's controls go over HTTP to a bridge, not UDP
+   to the bulb). Don't assume WiZ's 1-32 scene numbering carries over —
+   another brand's scene list/IDs (if it has one at all) needs its own
+   name/ID mapping, not a reuse of `kSceneNames`.
+3. `main/ui/page_smart_lights.cpp`'s status cards (`page_smart_lights_update`)
+   don't need to change — they only ever see the normalized `LightStatus`
+   list. Only `rebuild_control_panel()` needs a new brand branch, alongside
+   the existing `if (light.brand != "WiZ")` check, to build that brand's
+   own control widgets instead of (or in addition to) the "no controls
+   available" fallback message.
+
 ## Testing expectations
 
 There is no unit test suite (this is a hardware-driven embedded app with no
@@ -202,6 +299,17 @@ touch alignment) plus manually confirming: SD card mounts and
 `config_crono.json` parses (check boot log), Wi-Fi connects, NTP syncs
 (clock page status row goes green), and a weather fetch succeeds (weather
 page populates, clock page's corner icon updates). All of the above has
-been confirmed on one physical FNK0115L_4_3_IPS unit. If you change
+been confirmed on one physical FNK0115L_4_3_IPS unit. The Smart Lights
+feature (`smart_lights_service.cpp`, `page_smart_lights.cpp`) is the
+exception: it builds clean but **has not been tested against a real WiZ
+bulb** — confirm a configured light actually shows correct on/off/
+brightness/color/scene state (and that an unreachable one correctly shows
+"Offline" rather than hanging), and separately confirm the control panel
+actually controls the bulb: tapping a card selects it and shows the panel,
+the power switch/brightness slider/scene dropdown/color presets each
+produce the expected change on the physical light, the scene dropdown's
+initial selection matches whatever scene (or "Color / Custom") the light
+was actually already running, and selecting a non-WiZ-brand entry shows
+the "no controls available" message instead of a panel. If you change
 anything in this list and can't re-run it against real hardware, say so
 explicitly rather than claiming the feature still works.

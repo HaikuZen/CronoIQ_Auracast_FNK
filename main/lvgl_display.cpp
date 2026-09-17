@@ -147,7 +147,17 @@ static bool touch_init(void) {
 static void lvgl_port_setup(void) {
     const lvgl_port_cfg_t lvgl_cfg = {
         .task_priority = 4,
-        .task_stack = 6144,
+        // 6144 (this component's own minimal-demo default, and what the
+        // FNK0115 bring-up guide's trivial one-screen demo used) is too
+        // small once the UI gets heavier: an lv_dropdown (builds an
+        // internal popup list + scrollbar with its own layout pass) plus
+        // sliders plus multiple nested scrollable containers (the Smart
+        // Lights page's light grid + control panel) blew past it during a
+        // swipe's gesture-propagation call chain, crashing with "A stack
+        // overflow in task taskLVGL has been detected." Confirmed on
+        // physical hardware; bumped with headroom rather than to the bare
+        // minimum that stops this one crash.
+        .task_stack = 16384,
         .task_affinity = -1,
         .task_max_sleep_ms = 500,
         .task_stack_caps = MALLOC_CAP_DEFAULT,
