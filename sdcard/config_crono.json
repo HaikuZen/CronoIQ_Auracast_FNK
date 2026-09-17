@@ -1,0 +1,25 @@
+{
+  "wifi": {
+    "ssid": "YOUR_WIFI_SSID",
+    "password": "YOUR_WIFI_PASSWORD"
+  },
+  "ntp": {
+    "server": "pool.ntp.org",
+    "timezone": "CET-1CEST,M3.5.0,M10.5.0/3"
+  },
+  "weather": {
+    "provider": "visualcrossing",
+    "api_key": "YOUR_VISUALCROSSING_API_KEY",
+    "units": "metric",
+    "forecast_days": 5,
+    "update_interval_min": 30,
+    "location": {
+      "name": "Rome, IT",
+      "latitude": 41.9028,
+      "longitude": 12.4964
+    }
+  },
+  "display": {
+    "brightness_pct": 100
+  }
+}

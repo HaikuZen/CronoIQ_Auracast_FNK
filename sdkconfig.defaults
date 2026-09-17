@@ -1,0 +1,45 @@
+CONFIG_IDF_TARGET="esp32s3"
+
+# --- Flash — confirm against `esptool.py flash_id` on the real unit ---
+CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y
+CONFIG_ESPTOOLPY_FLASHSIZE="16MB"
+
+# --- PSRAM — only keep MODE_OCT if flash_id actually reported octal PSRAM ---
+CONFIG_SPIRAM=y
+CONFIG_SPIRAM_MODE_OCT=y
+CONFIG_SPIRAM_SPEED_80M=y
+CONFIG_SPIRAM_FETCH_INSTRUCTIONS=y
+CONFIG_SPIRAM_RODATA=y
+
+# --- Partition table: custom, no OTA — see partitions.csv. The
+# single-large-app built-in table (~1.5MB) is too small once LVGL + Wi-Fi +
+# mbedTLS + cJSON are all linked in; 16MB flash has plenty of room to spare.
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
+CONFIG_PARTITION_TABLE_FILENAME="partitions.csv"
+
+# --- LVGL 9 ---
+CONFIG_LV_COLOR_DEPTH_16=y
+CONFIG_LV_COLOR_16_SWAP=y
+CONFIG_LV_FONT_MONTSERRAT_14=y
+CONFIG_LV_FONT_MONTSERRAT_16=y
+CONFIG_LV_FONT_MONTSERRAT_20=y
+CONFIG_LV_FONT_MONTSERRAT_24=y
+CONFIG_LV_FONT_MONTSERRAT_32=y
+CONFIG_LV_USE_QRCODE=n
+# This app builds no example/demo screens of its own — LVGL's bundled
+# examples/demos were otherwise being compiled and linked in unused,
+# needlessly bloating flash usage.
+CONFIG_LV_BUILD_EXAMPLES=n
+CONFIG_LV_BUILD_DEMOS=n
+
+# --- Networking / TLS for the weather HTTPS request ---
+CONFIG_MBEDTLS_CERTIFICATE_BUNDLE=y
+CONFIG_MBEDTLS_CERTIFICATE_BUNDLE_DEFAULT_FULL=y
+CONFIG_ESP_HTTP_CLIENT_ENABLE_HTTPS=y
+
+# --- FATFS for the SD card ---
+CONFIG_FATFS_LFN_HEAP=y
+
+# --- Slightly larger main task stack: JSON parsing + HTTP + std::string use ---
+CONFIG_ESP_MAIN_TASK_STACK_SIZE=8192

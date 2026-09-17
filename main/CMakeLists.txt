@@ -1,0 +1,30 @@
+idf_component_register(
+    SRCS
+        "main.cpp"
+        "lvgl_display.cpp"
+        "sd_card.cpp"
+        "app_config.cpp"
+        "wifi_manager.cpp"
+        "time_manager.cpp"
+        "weather_service.cpp"
+        "ui/seven_segment.cpp"
+        "ui/weather_icons.cpp"
+        "ui/page_clock.cpp"
+        "ui/page_weather.cpp"
+        "ui/ui_manager.cpp"
+    INCLUDE_DIRS
+        "."
+        "ui"
+    REQUIRES
+        driver
+        esp_lcd
+        esp_wifi
+        esp_netif
+        esp_event
+        nvs_flash
+        esp_http_client
+        mbedtls
+        fatfs
+        sdmmc
+        lwip
+)
