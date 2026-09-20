@@ -30,7 +30,7 @@ void ui_manager_create(const AppConfig &cfg) {
     lv_obj_t *tab_lights = lv_tabview_add_tab(tabview, "Smart Lights");
 
     page_clock_create(tab_clock);
-    page_weather_create(tab_weather, cfg.weather.forecast_days);
+    page_weather_create(tab_weather, cfg.weather);
     page_smart_lights_create(tab_lights);
 
     page_clock_tick();

@@ -22,14 +22,14 @@ lv_obj_t *page_clock_create(lv_obj_t *parent) {
     s_weekday_label = lv_label_create(parent);
     lv_label_set_text(s_weekday_label, "--");
     lv_obj_set_style_text_color(s_weekday_label, lv_color_hex(0xE0F0FF), 0);
-    lv_obj_set_style_text_font(s_weekday_label, &lv_font_montserrat_24, 0);
+    lv_obj_set_style_text_font(s_weekday_label, &lv_font_montserrat_38, 0);
     lv_obj_align(s_weekday_label, LV_ALIGN_TOP_MID, 0, 4);
 
     // Row 2: date
     s_date_label = lv_label_create(parent);
     lv_label_set_text(s_date_label, "--");
     lv_obj_set_style_text_color(s_date_label, lv_color_hex(0x9AB4D0), 0);
-    lv_obj_set_style_text_font(s_date_label, &lv_font_montserrat_16, 0);
+    lv_obj_set_style_text_font(s_date_label, &lv_font_montserrat_32, 0);
     lv_obj_align_to(s_date_label, s_weekday_label, LV_ALIGN_OUT_BOTTOM_MID, 0, 2);
 
     // Current-conditions icon, top-right corner
@@ -37,7 +37,7 @@ lv_obj_t *page_clock_create(lv_obj_t *parent) {
     lv_obj_align(s_weather_icon, LV_ALIGN_TOP_RIGHT, -4, 4);
 
     // Middle: 7-segment HH:MM:ss
-    s_time_widget = sseg_time_create(parent, 110, lv_color_hex(0x00E5FF), lv_color_hex(0x143040));
+    s_time_widget = sseg_time_create(parent, 150, lv_color_hex(0x00E5FF), lv_color_hex(0x143040));
     sseg_time_set_text(s_time_widget, "00:00:00");
     lv_obj_align(s_time_widget, LV_ALIGN_CENTER, 0, 10);
 

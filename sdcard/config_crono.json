@@ -12,7 +12,7 @@
     "api_key": "YOUR_VISUALCROSSING_API_KEY",
     "units": "metric",
     "forecast_days": 5,
-    "update_interval_min": 30,
+    "update_interval_min": 60,
     "location": {
       "name": "Rome, IT",
       "latitude": 41.9028,

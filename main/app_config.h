@@ -33,7 +33,12 @@ struct WeatherConfig {
     std::string api_key;
     WeatherLocation location;
     int forecast_days = 5;
-    uint32_t update_interval_min = 30;
+    // Visual Crossing bills by records returned, not by call count — see
+    // the cost note above weather_service.cpp's build_url() and the config
+    // table in README.md before lowering this. 30 minutes was the original
+    // default but is too aggressive now that hourly detail is fetched too;
+    // 60 is a more conservative starting point, still tunable per-plan.
+    uint32_t update_interval_min = 60;
     // "metric" (°C) or "us" (°F) — passed straight through as Visual
     // Crossing's unitGroup query parameter.
     std::string units = "metric";

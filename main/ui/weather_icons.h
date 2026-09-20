@@ -18,3 +18,13 @@ lv_obj_t *weather_icon_create(lv_obj_t *parent, const char *icon_code, int32_t s
 
 // Rebuilds the icon's contents in place for a new icon_code.
 void weather_icon_update(lv_obj_t *icon_obj, const char *icon_code);
+
+// A single-object, low-cost stand-in for weather_icon_create() — one
+// color-coded circle instead of a multi-shape vector icon (up to 9
+// sub-objects for a sun). Use this wherever many icons get created in one
+// synchronous burst (e.g. a 24-entry hourly forecast row) — creating
+// hundreds of LVGL objects at once while holding the esp_lvgl_port lock
+// from a background task was observed hanging the app hard enough to trip
+// the task watchdog. Reserve the full weather_icon_create() for the small
+// number of icons shown at once (current conditions, day cards).
+lv_obj_t *weather_icon_dot_create(lv_obj_t *parent, const char *icon_code, int32_t size);

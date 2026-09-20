@@ -181,3 +181,48 @@ void weather_icon_update(lv_obj_t *icon_obj, const char *icon_code) {
     int32_t size = lv_obj_get_width(icon_obj);
     build_icon(icon_obj, size, icon_code);
 }
+
+lv_obj_t *weather_icon_dot_create(lv_obj_t *parent, const char *icon_code, int32_t size) {
+    uint32_t color_hex;
+    switch (classify(icon_code)) {
+        case Category::ClearDay:
+            color_hex = kSunHex;
+            break;
+        case Category::ClearNight:
+            color_hex = 0xA9B8E8;  // pale moonlight blue
+            break;
+        case Category::PartlyDay:
+            color_hex = 0xD9C877;  // muted sun-through-cloud
+            break;
+        case Category::PartlyNight:
+            color_hex = 0x8FA6C0;
+            break;
+        case Category::Rain:
+            color_hex = kRainHex;
+            break;
+        case Category::Snow:
+            color_hex = kSnowHex;
+            break;
+        case Category::Thunder:
+            color_hex = kBoltHex;
+            break;
+        case Category::Fog:
+        case Category::Wind:
+            color_hex = kFogHex;
+            break;
+        case Category::Cloudy:
+        default:
+            color_hex = kCloudHex;
+            break;
+    }
+
+    lv_obj_t *dot = lv_obj_create(parent);
+    lv_obj_remove_style_all(dot);
+    lv_obj_set_size(dot, size, size);
+    lv_obj_set_style_radius(dot, LV_RADIUS_CIRCLE, 0);
+    lv_obj_set_style_bg_color(dot, lv_color_hex(color_hex), 0);
+    lv_obj_set_style_bg_opa(dot, LV_OPA_COVER, 0);
+    lv_obj_clear_flag(dot, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_clear_flag(dot, LV_OBJ_FLAG_CLICKABLE);
+    return dot;
+}
