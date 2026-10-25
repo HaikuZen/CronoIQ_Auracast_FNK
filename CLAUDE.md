@@ -105,6 +105,29 @@ because liblvgl links after libmain. Verified on hardware: the Settings
 overlay opened in ~210ms with no watchdog error, using ~16KB of PSRAM and
 leaving internal RAM untouched.
 
+**Sideways image shift → `CONFIG_LCD_RGB_RESTART_IN_VSYNC=y`.** On real
+hardware the whole picture (tab bar included) sometimes slid sideways and
+wrapped around, all by itself, and stayed that way until reboot. That is
+the ESP32-S3 RGB-panel DMA underrun. The LCD's GDMA streams the frame
+buffer out of PSRAM continuously. Flash writes briefly block the shared
+MSPI bus, and this app now writes flash on its own (BSEC state saves to
+NVS, LittleFS config writes). Wi-Fi and LVGL drawing add PSRAM load too.
+One missed fetch desyncs the DMA permanently.
+- It is **not** the tabview layout, so don't redesign the UI to "fix" it.
+- The Kconfig option makes the driver restart the DMA every VSYNC, so a
+  slip lasts at most one frame. It needs no change to the guide-copied
+  panel code.
+- **Not yet confirmed on hardware:** whether a visible one-frame glitch
+  still shows during flash writes.
+- If the shift or a flicker persists, the next step is an RGB **bounce
+  buffer** (`bounce_buffer_size_px`, e.g. 10×`LCD_WIDTH`, about 32KB of
+  internal RAM for two buffers). The CPU then refills small internal-RAM
+  buffers instead of the DMA reading PSRAM directly. That is a deviation
+  from the bring-up guide's panel config and costs scarce internal RAM, so
+  only add it with evidence.
+- Lowering `pclk_hz` (13MHz) also cuts PSRAM load, but at the cost of
+  refresh rate.
+
 ## Build / flash
 
 ```sh
@@ -567,6 +590,29 @@ Two more things worth knowing even though they didn't cause a failure:
   - UI updates go through `ui_manager_update_env()`, which takes the LVGL
     lock. `page_environment_update()` only updates existing labels in
     place, because it runs every 3s. Don't make it rebuild objects.
+- **Indoor history graphs (`env_history.cpp` + the History view in
+  `page_environment.cpp`).**
+  - Storage: two PSRAM rings of averaged buckets. 3h holds 180×1min; 24h
+    holds 288×5min.
+  - Time is uptime-based, so it works before NTP sync. Elapsed buckets with
+    no readings are closed as NAN, so a missing sensor shows as a gap in the
+    right place and the line breaks there via `LV_CHART_POINT_NONE`.
+  - IAQ/CO2 are recorded only at accuracy ≥ 1; before that BSEC reports
+    placeholders.
+  - **RAM only, by the user's choice.** Persisting would add periodic flash
+    writes, which trigger the RGB DMA underrun described at the top.
+  - `env_history_add()` runs in `ui_manager_update_env()` *outside* the
+    LVGL lock, because the history has its own mutex.
+  - The chart reads `s_hist_pts` as an **ext y-array**, refreshed with one
+    `lv_chart_refresh()`. Don't switch to `lv_chart_set_series_values()`,
+    which invalidates per point; measured on hardware it took 54ms per
+    redraw against ~2.7ms now.
+  - The view refreshes on metric/range change, and at most every 15s on new
+    readings.
+  - Verified on hardware with a temporary self-test build: all 5 metrics ×
+    2 ranges render with plausible stats and no watchdog errors. **Not yet
+    checked:** what the graph actually looks like on the screen (layout,
+    colors, labels).
 
 ## Adding a second weather provider
 

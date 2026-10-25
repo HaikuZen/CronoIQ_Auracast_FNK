@@ -18,6 +18,14 @@ CONFIG_PARTITION_TABLE_CUSTOM=y
 CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
 CONFIG_PARTITION_TABLE_FILENAME="partitions.csv"
 
+# --- RGB panel: recover from DMA underruns ---
+# The panel's GDMA streams the frame buffer out of PSRAM nonstop; flash
+# writes (NVS/BSEC state saves, LittleFS) briefly block the shared MSPI bus
+# and Wi-Fi/LVGL add PSRAM load. One missed fetch desyncs the DMA and the
+# whole image stays shifted sideways (wrapping) until reboot — seen on real
+# hardware. Restarting the DMA every VSYNC limits any slip to one frame.
+CONFIG_LCD_RGB_RESTART_IN_VSYNC=y
+
 # --- LVGL 9 ---
 CONFIG_LV_COLOR_DEPTH_16=y
 CONFIG_LV_COLOR_16_SWAP=y

@@ -11,6 +11,7 @@ idf_component_register(
         "weather_service.cpp"
         "smart_lights_service.cpp"
         "env_sensor_service.cpp"
+        "env_history.cpp"
         "ui/seven_segment.cpp"
         "ui/weather_icons.cpp"
         "ui/page_clock.cpp"

@@ -29,6 +29,13 @@ The UI is a top tab bar with four pages:
   from "Excellent" to "Extremely polluted", a colored bar, and BSEC's
   calibration status), plus tiles for temperature, humidity, pressure, CO2
   equivalent, TVOC equivalent and gas resistance.
+  - **History:** a **Now | History** switch at the top of the page shows a
+    line graph of temperature, humidity, pressure, IAQ or CO2 over the last
+    **3 hours** (1-minute points) or **24 hours** (5-minute points), with
+    the current, minimum and maximum values.
+  - IAQ and CO2 are recorded only once BSEC's calibration has started
+    (accuracy ≥ 1).
+  - History is kept in RAM only and starts empty after each reboot.
 
 The **⚙ button in the Clock page's bottom-left corner** opens a full-screen
 **Settings** screen, which isn't one of the tabs. It has:
@@ -262,6 +269,7 @@ main/
   weather_service.{h,cpp}                      — Visual Crossing HTTP client + JSON parsing
   smart_lights_service.{h,cpp}                 — WiZ UDP polling + JSON parsing
   env_sensor_service.{h,cpp}                   — BME690 on the shared I2C bus + Bosch BSEC
+  env_history.{h,cpp}                          — 3h/24h in-RAM history of sensor readings
   main.cpp                                     — app_main: wires everything together
   ui/
     seven_segment.{h,cpp}      — LED-style 7-segment digit/colon widget (no font assets)
@@ -269,7 +277,7 @@ main/
     page_clock.{h,cpp}         — Clock page
     page_weather.{h,cpp}       — Weather page
     page_smart_lights.{h,cpp}  — Smart Lights page
-    page_environment.{h,cpp}   — Indoor (BME690 air quality) page
+    page_environment.{h,cpp}   — Indoor page: Now (readings) / History (graphs)
     page_settings.{h,cpp}      — Settings overlay (opened from the Clock page's ⚙ button)
     ui_manager.{h,cpp}         — top tabview, ties pages + 1Hz clock tick together
 components/bsec/            — wraps an external Bosch BSEC download (not in the repo)

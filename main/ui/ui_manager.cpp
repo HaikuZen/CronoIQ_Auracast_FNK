@@ -1,5 +1,6 @@
 #include "ui_manager.h"
 
+#include "env_history.h"
 #include "esp_lvgl_port.h"
 #include "page_clock.h"
 #include "page_environment.h"
@@ -58,6 +59,8 @@ void ui_manager_update_smart_lights(const std::vector<LightStatus> &lights) {
 }
 
 void ui_manager_update_env(const EnvReading &reading) {
+    // Outside the LVGL lock: the history has its own mutex.
+    env_history_add(reading);
     if (lvgl_port_lock(0)) {
         page_environment_update(reading);
         lvgl_port_unlock();
