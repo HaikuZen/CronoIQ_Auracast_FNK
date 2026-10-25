@@ -8,11 +8,13 @@ idf_component_register(
         "time_manager.cpp"
         "weather_service.cpp"
         "smart_lights_service.cpp"
+        "env_sensor_service.cpp"
         "ui/seven_segment.cpp"
         "ui/weather_icons.cpp"
         "ui/page_clock.cpp"
         "ui/page_weather.cpp"
         "ui/page_smart_lights.cpp"
+        "ui/page_environment.cpp"
         "ui/ui_manager.cpp"
     INCLUDE_DIRS
         "."
@@ -29,4 +31,6 @@ idf_component_register(
         fatfs
         sdmmc
         lwip
+        esp_timer
+        bsec
 )

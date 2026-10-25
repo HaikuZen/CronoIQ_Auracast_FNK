@@ -5,7 +5,7 @@ GT911 capacitive touch), built on ESP-IDF + LVGL v9. Configuration lives on
 an SD card, so Wi-Fi credentials, timezone, and weather provider settings
 never need a firmware rebuild.
 
-The UI is a top tab bar with three pages:
+The UI is a top tab bar with four pages:
 
 - **Clock** — weekday (row 1), date (row 2), a 7-segment-style `HH:MM:ss`
   clock in the middle, a Wi-Fi/NTP status row at the bottom, and the current
@@ -24,6 +24,11 @@ The UI is a top tab bar with three pages:
   brand-aware — a light whose brand isn't implemented yet still shows its
   status card, but selecting it shows a "no controls available" message
   instead of the WiZ panel.
+- **Indoor** — readings from an optional Bosch **BME690** sensor processed by
+  Bosch's BSEC library: an air-quality card (IAQ index 0-500, its category
+  from "Excellent" to "Extremely polluted", a colored bar, and BSEC's
+  calibration status), plus tiles for temperature, humidity, pressure, CO2
+  equivalent, TVOC equivalent and gas resistance.
 
 ## Hardware
 
@@ -36,6 +41,25 @@ The UI is a top tab bar with three pages:
   FNK0115L_4_3_IPS hardware** (card mounts, `config_crono.json` is read
   correctly). If your specific unit's card slot is wired differently, update
   `main/sd_card.h`.
+- Optional: a **BME690** breakout, sharing the GT911 touch controller's I2C
+  bus. The bus runs on IO19/IO20, which the board breaks out on connector
+  **P4**. P4 has no power pins, so take power from **P5**:
+
+  | BME690 | FNK0115 |
+  |---|---|
+  | VCC | P5 pin 2 (3.3V) |
+  | GND | P5 pin 1 (GND) |
+  | SDA | P4 pin 3 (IO19) |
+  | SCL | P4 pin 4 (IO20) |
+  | SDO | GND → address `0x76`, or 3.3V → `0x77` |
+  | CS | 3.3V (I2C mode; most breakouts already do this) |
+
+  Pin 1 is the one next to the ▲ on the silkscreen. **Don't** use P5's
+  IO17/IO18 as an I2C port: IO18 is the GT911's interrupt line. The bus
+  only has the ESP32's weak internal pull-ups, so prefer a breakout with
+  its own 4.7-10kΩ pull-ups and keep the leads short. The sensor is
+  auto-detected at boot and re-probed every 10s if it's missing, so it can
+  also be plugged in later.
 
 ## Building
 
@@ -60,6 +84,26 @@ the Weather page loads and shows that day's hourly forecast. If you hit a build
 error on a different ESP-IDF/LVGL/esp_lvgl_port version combination, see
 `CLAUDE.md`'s "Build / flash" section for the version-sensitive spots and
 the issues already found and fixed there.
+
+### Bosch BSEC (for the BME690)
+
+The BME690's air-quality output needs Bosch's proprietary BSEC 3.x library,
+which this repo **does not include**: Bosch's license doesn't allow
+redistributing it. Download it from Bosch Sensortec, unzip it, and point the
+build at the folder that contains `release_bin/` and `examples/`. The build
+looks for it in this order:
+
+1. `idf.py -DBSEC_DIR=/path/to/bsec_v3 build`
+2. the `BSEC_DIR` environment variable
+3. `../bsec_v3` next to this project's parent directory, e.g.
+   `~/Scaricati/bsec_v3` for a checkout at `~/Scaricati/CYD/CronoIQ_Auracast_FNK`
+
+`components/bsec/CMakeLists.txt` takes `libalgobsec.a` for the ESP32-S3,
+the BME690 IAQ config `bme690_iaq_33v_3s_4d` (3.3V supply, 3s low-power
+sampling, 4-day calibration window) and the BSD-licensed `bme69x` driver
+from that folder. If the folder isn't found, the build prints a CMake
+warning and still succeeds, and the Indoor page says the firmware was built
+without BSEC.
 
 ## Configuration — `config_crono.json`
 
@@ -107,7 +151,12 @@ Wi-Fi and weather stay off) rather than refusing to start.
       "ip": "192.168.1.51",
       "udp_port": 38899
     }
-  ]
+  ],
+  "env_sensor": {
+    "enabled": true,
+    "i2c_address": "auto",
+    "temp_offset_c": 0.15
+  }
 }
 ```
 
@@ -128,6 +177,9 @@ Wi-Fi and weather stay off) rather than refusing to start.
 | `smart_lights[].brand` | Only `"WiZ"` is implemented in this release; other values are still shown on the page, always reported as offline. |
 | `smart_lights[].ip` | The light's IP address on your LAN (a static/reserved DHCP lease is strongly recommended — there's no discovery, this is used directly). |
 | `smart_lights[].udp_port` | UDP port the light listens on; WiZ's default is `38899`. |
+| `env_sensor.enabled` | `false` skips probing for a BME690. Optional; defaults to `true`. |
+| `env_sensor.i2c_address` | `"0x76"`, `"0x77"` (or `118`/`119`), or anything else such as `"auto"` to probe both. Optional; defaults to auto. |
+| `env_sensor.temp_offset_c` | °C subtracted from the sensor's temperature to make up for heat from the board and display; humidity is corrected to match. The default `0.15` is Bosch's figure for a bare sensor. A sensor mounted close to the FNK0115 will read high, so compare it against a reference thermometer and raise this. |
 
 ### Visual Crossing API cost
 
@@ -178,6 +230,7 @@ main/
   time_manager.{h,cpp}                         — SNTP + local time formatting
   weather_service.{h,cpp}                      — Visual Crossing HTTP client + JSON parsing
   smart_lights_service.{h,cpp}                 — WiZ UDP polling + JSON parsing
+  env_sensor_service.{h,cpp}                   — BME690 on the shared I2C bus + Bosch BSEC
   main.cpp                                     — app_main: wires everything together
   ui/
     seven_segment.{h,cpp}      — LED-style 7-segment digit/colon widget (no font assets)
@@ -185,7 +238,9 @@ main/
     page_clock.{h,cpp}         — Clock page
     page_weather.{h,cpp}       — Weather page
     page_smart_lights.{h,cpp}  — Smart Lights page
+    page_environment.{h,cpp}   — Indoor (BME690 air quality) page
     ui_manager.{h,cpp}         — top tabview, ties pages + 1Hz clock tick together
+components/bsec/            — wraps an external Bosch BSEC download (not in the repo)
 sdcard/config_crono.json    — example config to copy onto the SD card
 partitions.csv              — custom partition table (4MB app, no OTA)
 ```
@@ -344,6 +399,14 @@ not something a firmware update can work around.
   exists but hasn't been triggered on real hardware), and tapping a day
   card at the exact moment the periodic poll fires (the mutual-exclusion
   guard in `fetch_raw()` should make one of the two simply retry).
+- **The BME690 is partly confirmed on hardware.** On the physical unit it is
+  auto-detected on the shared bus (`BME69x found at 0x77`), BSEC starts,
+  and plausible readings are logged within seconds. Still to check:
+  the Indoor page itself, touch responsiveness with the sensor attached, IAQ accuracy goes from 0 up to 3
+  over the first hours or days, and after a reboot the restored calibration
+  (`Restored BSEC calibration state`) brings accuracy back quickly. Expect
+  the IAQ value to sit at about 50, dimmed, while accuracy is 0; that's how
+  BSEC behaves before calibration, not a fault.
 - See "Visual Crossing API cost" above for the (now much smaller) ongoing
   cost — the periodic poll alone comfortably fits a typical 1,000
   records/day free-tier budget at the shipped defaults; heavy manual

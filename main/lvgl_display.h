@@ -1,6 +1,7 @@
 #ifndef _TFT_DISPLAY_H_
 #define _TFT_DISPLAY_H_
 
+#include "driver/i2c_master.h"
 #include "lvgl.h"
 #include "TFT_Config.h"
 
@@ -47,5 +48,12 @@
 // before building any LVGL UI. Touch failure is non-fatal — see
 // lvgl_display.cpp — the display still comes up without an input device.
 void board_init(void);
+
+// The I2C master bus touch_init() created on TOUCH_I2C_SDA/TOUCH_I2C_SCL
+// (exposed on connector P4 as IO19/IO20), for other devices to add
+// themselves to with i2c_master_bus_add_device(). nullptr before
+// board_init(). The ESP-IDF I2C master driver serializes access per bus, so
+// devices on it can be used from different tasks concurrently with touch.
+i2c_master_bus_handle_t board_get_i2c_bus(void);
 
 #endif

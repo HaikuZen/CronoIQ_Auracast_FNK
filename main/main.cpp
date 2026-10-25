@@ -1,5 +1,6 @@
 #include "app_config.h"
 #include "board.h"
+#include "env_sensor_service.h"
 #include "esp_log.h"
 #include "esp_lvgl_port.h"
 #include "sd_card.h"
@@ -33,6 +34,7 @@ extern "C" void app_main(void) {
     time_manager_start(cfg.ntp);
     weather_service_start(cfg.weather, ui_manager_update_weather);
     smart_lights_service_start(cfg.smart_lights, ui_manager_update_smart_lights);
+    env_sensor_service_start(cfg.env_sensor, ui_manager_update_env);
 
     ESP_LOGI(TAG, "Init complete");
 }

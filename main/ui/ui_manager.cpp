@@ -2,6 +2,7 @@
 
 #include "esp_lvgl_port.h"
 #include "page_clock.h"
+#include "page_environment.h"
 #include "page_smart_lights.h"
 #include "page_weather.h"
 #include "weather_icons.h"
@@ -28,10 +29,12 @@ void ui_manager_create(const AppConfig &cfg) {
     lv_obj_t *tab_clock = lv_tabview_add_tab(tabview, "Clock");
     lv_obj_t *tab_weather = lv_tabview_add_tab(tabview, "Weather");
     lv_obj_t *tab_lights = lv_tabview_add_tab(tabview, "Smart Lights");
+    lv_obj_t *tab_env = lv_tabview_add_tab(tabview, "Indoor");
 
     page_clock_create(tab_clock);
     page_weather_create(tab_weather, cfg.weather);
     page_smart_lights_create(tab_lights);
+    page_environment_create(tab_env, cfg.weather.units);
 
     page_clock_tick();
     lv_timer_create(clock_tick_timer_cb, 1000, nullptr);
@@ -48,6 +51,13 @@ void ui_manager_update_weather(const WeatherData &data) {
 void ui_manager_update_smart_lights(const std::vector<LightStatus> &lights) {
     if (lvgl_port_lock(0)) {
         page_smart_lights_update(lights);
+        lvgl_port_unlock();
+    }
+}
+
+void ui_manager_update_env(const EnvReading &reading) {
+    if (lvgl_port_lock(0)) {
+        page_environment_update(reading);
         lvgl_port_unlock();
     }
 }

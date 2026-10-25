@@ -35,5 +35,10 @@
       "ip": "192.168.1.51",
       "udp_port": 38899
     }
-  ]
+  ],
+  "env_sensor": {
+    "enabled": true,
+    "i2c_address": "auto",
+    "temp_offset_c": 0.15
+  }
 }

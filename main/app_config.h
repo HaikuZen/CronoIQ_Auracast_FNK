@@ -58,12 +58,28 @@ struct SmartLightConfig {
     uint16_t udp_port = 38899;
 };
 
+struct EnvSensorConfig {
+    // BME690 on the shared touch I2C bus (connector P4 IO19/IO20). Set false
+    // to skip probing entirely (e.g. no sensor fitted).
+    bool enabled = true;
+    // 0x76 (SDO to GND) or 0x77 (SDO to 3.3V); 0 = probe both, in that order.
+    uint8_t i2c_address = 0;
+    // Degrees C subtracted from the sensor's temperature to compensate for
+    // heat from the board/display around it (fed to BSEC as
+    // BSEC_INPUT_HEATSOURCE, so humidity is corrected consistently too).
+    // Bosch's own figure for a bare sensor in LP mode is ~0.15; a sensor
+    // mounted on/near the FNK0115 will need more — calibrate against a
+    // reference thermometer.
+    float temp_offset_c = 0.15f;
+};
+
 struct AppConfig {
     WifiConfig wifi;
     NtpConfig ntp;
     WeatherConfig weather;
     DisplayConfig display;
     std::vector<SmartLightConfig> smart_lights;
+    EnvSensorConfig env_sensor;
 };
 
 // Reads and parses the JSON config file at `path`. On any failure (missing

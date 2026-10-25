@@ -6,19 +6,22 @@ Guidance for Claude Code (or any agent) working in this repository.
 
 CronoIQ: an ESP-IDF (v5.3+, developed against v6.1) + LVGL v9 smart-clock
 firmware for the Freenove FNK0115 (ESP32-S3, 800×480 RGB panel, GT911
-touch). Three tab pages: Clock (weekday/date/7-segment time/Wi-Fi+NTP
+touch). Four tab pages: Clock (weekday/date/7-segment time/Wi-Fi+NTP
 status, plus a small current-weather icon), Weather (current conditions +
 forecast cards; tap a day card to drill into that day's hourly forecast,
 fetched on demand only for that one day, in the same space, "< Back" to
-return), and Smart Lights (a status card per
+return), Smart Lights (a status card per
 configured light —
 name, on/off, brightness, approximate color — polled over UDP, WiZ being
 the first supported brand; tap a card to select it and open a control
 panel below with a power switch, brightness slider, a dropdown of WiZ's 32
 built-in dynamic scenes, and color presets, brand-aware so an unimplemented
-brand shows a "no controls" message instead). Configuration (Wi-Fi, NTP,
-weather provider/location, smart
-light list) is read from `/sdcard/config_crono.json` at boot — see
+brand shows a "no controls" message instead), and Indoor (an optional
+Bosch BME690 on the touch controller's I2C bus, processed by Bosch's
+proprietary BSEC 3.x library: IAQ index/category/calibration status plus
+temperature/humidity/pressure/CO2-eq/TVOC-eq/gas-resistance tiles).
+Configuration (Wi-Fi, NTP, weather provider/location, smart
+light list, env sensor) is read from `/sdcard/config_crono.json` at boot — see
 `README.md` for the schema.
 
 `Agent_FNK0115_new_ESP-IDF.md` in the repo root is the source bring-up
@@ -74,6 +77,12 @@ swipe still crashes after reflashing with this change, the actual overflow
 is deeper than assumed here and `task_stack` needs raising further (watch
 `esp_lvgl_port`'s task in a stack high-water-mark check, or just double it
 again), not reverted.
+
+A third deviation, small and additive: `touch_init()`'s I2C bus handle is
+kept in a file-static `s_i2c_bus` (instead of a local) and exposed through
+`board_get_i2c_bus()`, so the BME690 can join the same bus
+(`env_sensor_service.cpp`). The bus config itself is unchanged from the
+guide.
 
 ## Build / flash
 
@@ -422,6 +431,48 @@ Two more things worth knowing even though they didn't cause a failure:
   the only GPIOs the FNK0115 bring-up guide's panel/touch/backlight wiring
   leaves free). If you get real schematic/continuity info for the card
   slot, update that header and remove the caveat from `README.md`.
+- **Bosch BSEC is proprietary and deliberately not in this repo.**
+  `components/bsec/CMakeLists.txt` points at the user's own unpacked BSEC
+  download, found via `-DBSEC_DIR`, the `$BSEC_DIR` env var, or a default of
+  `../bsec_v3` next to the project's parent directory. It compiles the
+  BSD-3 `bme69x` driver and the `bme690_iaq_33v_3s_4d` config `.c` straight
+  out of that folder, links `release_bin/IAQ/bin/esp/esp32_s3/libalgobsec.a`
+  as a prebuilt library, and defines `CRONOIQ_HAVE_BSEC`. Don't copy those
+  files into the repo: Bosch's license forbids redistribution, and that
+  includes the "Confidential" integration example
+  (`bsec_integration.c`), which is why `env_sensor_service.cpp` has its
+  own sensor-control loop rather than a copy of Bosch's. If BSEC isn't
+  found, the component registers empty, the build still passes (verified
+  with `-DBSEC_DIR=/nonexistent`), and `env_sensor_service_start()`
+  reports `EnvSensorState::NoLibrary`. Keep that fallback building.
+  **The config and the sample rate must match.** `3s` in the config name
+  means `BSEC_SAMPLE_RATE_LP` in `init_bsec()`; `300s` would mean ULP.
+  Change both together, or `bsec_update_subscription()` fails.
+- **The BME690 shares the GT911's I2C bus** (IO19/IO20, broken out on
+  connector P4; power comes from P5). Don't create a second bus on those
+  pins, which would fail. Add devices to `board_get_i2c_bus()` instead. The
+  ESP-IDF I2C master driver locks the bus per transaction, so the sensor
+  task and the LVGL task's touch reads coexist without extra locking.
+  - The sensor runs at 100kHz (the GT911 is at 400kHz), because the bus
+    only has internal pull-ups plus flying leads.
+  - P5's IO17/IO18 look like a ready-made I2C port, but IO18 is
+    `TOUCH_INT`, so never put a bus there.
+- **`env_sensor_service.cpp` drives BSEC's `bsec_sensor_control()` loop on
+  its own task**, sleeping until `next_call`.
+  - In forced mode it waits for the measurement to finish (T/P/H time plus
+    the heater duration) before `bme69x_get_data()`. The driver's own
+    5×10ms new-data poll is shorter than a typical 100ms+ heater step, so
+    don't remove that wait.
+  - After `kMaxConsecutiveErrors` read failures it saves state and goes
+    back to probing, which handles a sensor that was unplugged or lost
+    power. It also re-probes every 10s while nothing is found.
+  - The BSEC calibration state (~200 bytes) is saved to NVS (namespace
+    `bsec`) every hour and restored at init. `ensure_nvs()` initializes
+    NVS itself because `wifi_manager_start()` skips that when no SSID is
+    configured.
+  - UI updates go through `ui_manager_update_env()`, which takes the LVGL
+    lock. `page_environment_update()` only updates existing labels in
+    place, because it runs every 3s. Don't make it rebuild objects.
 
 ## Adding a second weather provider
 
@@ -501,6 +552,24 @@ the power switch/brightness slider/scene dropdown/color presets each
 produce the expected change on the physical light, the scene dropdown's
 initial selection matches whatever scene (or "Color / Custom") the light
 was actually already running, and selecting a non-WiZ-brand entry shows
-the "no controls available" message instead of a panel. If you change
+the "no controls available" message instead of a panel. The BME690 /
+Indoor page (`env_sensor_service.cpp`, `page_environment.cpp`,
+`components/bsec`) is **partly confirmed on hardware**: on the physical
+unit, a BME690 breakout (SDO high, so 0x77) wired to P4/P5 is auto-detected
+(`BME69x found at 0x77 (chip id 0x61, variant 0x2)`), BSEC 3.3.0.1
+initializes, the GT911 still comes up on the shared bus, and plausible
+readings are logged within about 2.5s of BSEC starting and then once a
+minute (21.4C, 60%rH, 1002hPa, IAQ 50 at accuracy 0). The env task started
+at priority +2, and a weather TLS handshake starved it into
+`bsec_sensor_control returned 100` (timing violation). At +5 that warning
+no longer appears, including through the weather fetch. Still unconfirmed:
+- the Indoor page itself was not looked at, only the log
+- touch responsiveness with the sensor attached (GT911 init is fine)
+- IAQ accuracy rising over hours or days
+- after a reboot, `Restored BSEC calibration state` is logged
+- unplugging the sensor flips the page to "not found", and plugging it back
+  in recovers
+
+If you change
 anything in this list and can't re-run it against real hardware, say so
 explicitly rather than claiming the feature still works.

@@ -138,6 +138,30 @@ bool app_config_load(const char *path, AppConfig &out_config) {
         }
     }
 
+    const cJSON *env = cJSON_GetObjectItemCaseSensitive(root, "env_sensor");
+    if (cJSON_IsObject(env)) {
+        const cJSON *enabled = cJSON_GetObjectItemCaseSensitive(env, "enabled");
+        if (cJSON_IsBool(enabled)) out_config.env_sensor.enabled = cJSON_IsTrue(enabled);
+        // Accepts a number (118) or a hex string ("0x76") — JSON itself has
+        // no hex literals, and "0x76" is how the datasheet spells it.
+        const cJSON *addr = cJSON_GetObjectItemCaseSensitive(env, "i2c_address");
+        long addr_val = out_config.env_sensor.i2c_address;
+        if (cJSON_IsNumber(addr)) {
+            addr_val = (long)addr->valuedouble;
+        } else if (cJSON_IsString(addr) && addr->valuestring != nullptr) {
+            addr_val = strtol(addr->valuestring, nullptr, 0);
+        }
+        if (addr_val == 0 || addr_val == 0x76 || addr_val == 0x77) {
+            out_config.env_sensor.i2c_address = (uint8_t)addr_val;
+        } else {
+            ESP_LOGW(TAG, "env_sensor.i2c_address 0x%lx is not a BME690 address "
+                          "(0x76/0x77) — probing both instead", addr_val);
+            out_config.env_sensor.i2c_address = 0;
+        }
+        out_config.env_sensor.temp_offset_c =
+            (float)json_get_number(env, "temp_offset_c", out_config.env_sensor.temp_offset_c);
+    }
+
     cJSON_Delete(root);
 
     if (out_config.wifi.ssid.empty()) {

@@ -21,6 +21,10 @@ static const char *TAG = "board";
 
 static esp_lcd_panel_handle_t s_lcd_panel = nullptr;
 static esp_lcd_touch_handle_t s_touch_handle = nullptr;
+// Kept so other I2C peripherals wired to the same SDA/SCL pair (the BME690
+// on connector P4, see env_sensor_service.cpp) can share this bus —
+// creating a second bus on the same pins would fail.
+static i2c_master_bus_handle_t s_i2c_bus = nullptr;
 
 static void lcd_panel_init(void) {
     ESP_LOGI(TAG, "Initialising RGB panel (%dx%d)", LCD_WIDTH, LCD_HEIGHT);
@@ -81,7 +85,6 @@ static bool touch_init(void) {
     ESP_LOGI(TAG, "Initialising GT911 touch (SDA=%d SCL=%d INT=%d RST=%d)",
              TOUCH_I2C_SDA, TOUCH_I2C_SCL, TOUCH_INT, TOUCH_RST);
 
-    i2c_master_bus_handle_t i2c_bus = nullptr;
     const i2c_master_bus_config_t i2c_bus_config = {
         .i2c_port = I2C_NUM_0,
         .sda_io_num = (gpio_num_t)TOUCH_I2C_SDA,
@@ -90,11 +93,11 @@ static bool touch_init(void) {
         .glitch_ignore_cnt = 7,
         .flags = { .enable_internal_pullup = 1 },
     };
-    ESP_ERROR_CHECK(i2c_new_master_bus(&i2c_bus_config, &i2c_bus));
+    ESP_ERROR_CHECK(i2c_new_master_bus(&i2c_bus_config, &s_i2c_bus));
 
     esp_lcd_panel_io_handle_t tp_io_handle = nullptr;
     esp_lcd_panel_io_i2c_config_t tp_io_config = ESP_LCD_TOUCH_IO_I2C_GT911_CONFIG();
-    ESP_ERROR_CHECK(esp_lcd_new_panel_io_i2c(i2c_bus, &tp_io_config, &tp_io_handle));
+    ESP_ERROR_CHECK(esp_lcd_new_panel_io_i2c(s_i2c_bus, &tp_io_config, &tp_io_handle));
 
     // Without driver_data, esp_lcd_touch_new_i2c_gt911() skips its I2C
     // address-selection reset sequence entirely (logs "I2C address
@@ -198,6 +201,10 @@ static void lvgl_port_setup(void) {
             ESP_LOGE(TAG, "lvgl_port_add_touch failed");
         }
     }
+}
+
+i2c_master_bus_handle_t board_get_i2c_bus(void) {
+    return s_i2c_bus;
 }
 
 void board_init(void) {
