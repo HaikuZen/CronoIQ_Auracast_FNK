@@ -1,11 +1,13 @@
 #include "env_sensor_service.h"
 
+#include <atomic>
 #include <cstring>
 #include <utility>
 
 #include "board.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
 #include "freertos/task.h"
 #include "nvs.h"
 #include "nvs_flash.h"
@@ -67,6 +69,17 @@ static struct bme69x_conf s_bme_conf = {};
 static struct bme69x_heatr_conf s_heatr_conf = {};
 static uint8_t s_op_mode = BME69X_SLEEP_MODE;
 static void *s_bsec = nullptr;
+
+// Save-on-request handshake for env_sensor_service_save_state_now(): the
+// BSEC instance belongs to env_sensor_task, so the save has to run there.
+// The requester sets s_save_requested, notifies the task (which waits with
+// ulTaskNotifyTake() rather than vTaskDelay() so it wakes immediately), and
+// blocks on s_saved_sem.
+static TaskHandle_t s_task = nullptr;
+static SemaphoreHandle_t s_saved_sem = nullptr;
+static std::atomic<bool> s_save_requested{false};
+static std::atomic<bool> s_save_ok{false};
+static std::atomic<bool> s_bsec_active{false};  // inside run_bsec_loop()
 // Scratch buffer BSEC needs for set_configuration/set_state/get_state —
 // static rather than on the task stack (4KB).
 static uint8_t s_work_buffer[BSEC_MAX_WORKBUFFER_SIZE];
@@ -186,14 +199,14 @@ static void load_bsec_state() {
     }
 }
 
-static void save_bsec_state() {
+static bool save_bsec_state() {
     uint8_t state[BSEC_MAX_STATE_BLOB_SIZE];
     uint32_t len = 0;
     bsec_library_return_t st =
         bsec_get_state(s_bsec, 0, state, sizeof(state), s_work_buffer, sizeof(s_work_buffer), &len);
     if (st != BSEC_OK || len == 0) {
         ESP_LOGW(TAG, "bsec_get_state failed (%d) — not saving", st);
-        return;
+        return false;
     }
     nvs_handle_t nvs;
     esp_err_t err = nvs_open(kNvsNamespace, NVS_READWRITE, &nvs);
@@ -204,9 +217,18 @@ static void save_bsec_state() {
     }
     if (err != ESP_OK) {
         ESP_LOGW(TAG, "Saving BSEC state to NVS failed: %s", esp_err_to_name(err));
-    } else {
-        ESP_LOGI(TAG, "Saved BSEC calibration state (%u bytes, IAQ accuracy %u)", (unsigned)len,
-                 s_reading.iaq_accuracy);
+        return false;
+    }
+    ESP_LOGI(TAG, "Saved BSEC calibration state (%u bytes, IAQ accuracy %u)", (unsigned)len,
+             s_reading.iaq_accuracy);
+    return true;
+}
+
+// Services a pending env_sensor_service_save_state_now() request, if any.
+static void handle_save_request() {
+    if (s_save_requested.exchange(false)) {
+        s_save_ok = save_bsec_state();
+        xSemaphoreGive(s_saved_sem);
     }
 }
 
@@ -385,10 +407,13 @@ static void run_bsec_loop() {
     int consecutive_errors = 0;
     int64_t last_save_us = esp_timer_get_time();
     int64_t last_log_us = 0;
+    uint8_t last_saved_accuracy = 0;
 
     report_state(EnvSensorState::WarmingUp);
+    s_bsec_active = true;
 
     while (consecutive_errors < kMaxConsecutiveErrors) {
+        handle_save_request();
         const int64_t now_ns = esp_timer_get_time() * 1000;
         if (now_ns >= settings.next_call) {
             bsec_library_return_t st = bsec_sensor_control(s_bsec, now_ns, &settings);
@@ -457,19 +482,30 @@ static void run_bsec_loop() {
                 }
             }
 
-            if (esp_timer_get_time() - last_save_us >= kStateSaveIntervalUs) {
-                save_bsec_state();
+            // Hourly, plus immediately whenever IAQ accuracy reaches a new
+            // level — so a calibration milestone isn't lost to a power cut
+            // or reflash (which can't save first) within the next hour.
+            if (esp_timer_get_time() - last_save_us >= kStateSaveIntervalUs ||
+                s_reading.iaq_accuracy > last_saved_accuracy) {
+                if (save_bsec_state()) last_saved_accuracy = s_reading.iaq_accuracy;
                 last_save_us = esp_timer_get_time();
             }
         }
 
         int64_t wait_ms = (settings.next_call - esp_timer_get_time() * 1000) / 1000000;
         TickType_t ticks = wait_ms > 0 ? pdMS_TO_TICKS(wait_ms) : 0;
-        vTaskDelay(ticks > 0 ? ticks : 1);
+        // Like vTaskDelay(), but a save request wakes it early.
+        ulTaskNotifyTake(pdTRUE, ticks > 0 ? ticks : 1);
     }
 
     ESP_LOGW(TAG, "BME69x stopped responding — saving state and re-probing");
+    s_bsec_active = false;
     save_bsec_state();
+    // A request that raced with the exit: that final save covered it.
+    if (s_save_requested.exchange(false)) {
+        s_save_ok = true;
+        xSemaphoreGive(s_saved_sem);
+    }
 }
 
 static void env_sensor_task(void *arg) {
@@ -549,10 +585,23 @@ void env_sensor_service_start(const EnvSensorConfig &cfg, EnvUpdateCb on_update)
     // TLS handshake starved it into BSEC_W_SC_CALL_TIMING_VIOLATION (100)
     // on real hardware. The task sleeps almost all the time and each wake
     // is a few ms of I2C + bsec_do_steps(), so it costs the others nothing.
-    if (xTaskCreate(env_sensor_task, "env_sensor_task", 6144, nullptr, tskIDLE_PRIORITY + 5, nullptr) != pdPASS) {
+    s_saved_sem = xSemaphoreCreateBinary();
+    if (xTaskCreate(env_sensor_task, "env_sensor_task", 6144, nullptr, tskIDLE_PRIORITY + 5, &s_task) != pdPASS) {
         ESP_LOGE(TAG, "xTaskCreate failed for env_sensor_task (out of memory?)");
         report_state(EnvSensorState::Error);
     }
+}
+
+bool env_sensor_service_save_state_now(uint32_t timeout_ms) {
+    if (!s_task || !s_saved_sem || !s_bsec_active) return false;  // nothing calibrating to save
+    xSemaphoreTake(s_saved_sem, 0);  // drop any stale give
+    s_save_requested = true;
+    xTaskNotifyGive(s_task);
+    if (xSemaphoreTake(s_saved_sem, pdMS_TO_TICKS(timeout_ms)) != pdTRUE) {
+        ESP_LOGW(TAG, "Timed out waiting for BSEC state save");
+        return false;
+    }
+    return s_save_ok;
 }
 
 #else  // !CRONOIQ_HAVE_BSEC
@@ -567,6 +616,11 @@ void env_sensor_service_start(const EnvSensorConfig &cfg, EnvUpdateCb on_update)
     ESP_LOGW(TAG, "Built without Bosch BSEC (see components/bsec/CMakeLists.txt) — "
                   "BME690 support disabled");
     report_state(EnvSensorState::NoLibrary);
+}
+
+bool env_sensor_service_save_state_now(uint32_t timeout_ms) {
+    (void)timeout_ms;
+    return false;
 }
 
 #endif

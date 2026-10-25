@@ -30,6 +30,11 @@ CONFIG_LV_FONT_MONTSERRAT_34=y
 CONFIG_LV_FONT_MONTSERRAT_36=y
 CONFIG_LV_FONT_MONTSERRAT_38=y
 CONFIG_LV_USE_QRCODE=n
+# LVGL heap: custom hooks in main/lvgl_mem_psram.cpp route lv_malloc() to
+# PSRAM. The default builtin 64KB internal-RAM pool ran out once the
+# Settings overlay was added (lv_malloc NULL -> LV_ASSERT_MALLOC's while(1)
+# froze the UI task, touch dead) — see CLAUDE.md.
+CONFIG_LV_USE_CUSTOM_MALLOC=y
 # This app builds no example/demo screens of its own — LVGL's bundled
 # examples/demos were otherwise being compiled and linked in unused,
 # needlessly bloating flash usage.

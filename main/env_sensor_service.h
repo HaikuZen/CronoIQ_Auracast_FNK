@@ -46,3 +46,14 @@ using EnvUpdateCb = std::function<void(const EnvReading &)>;
 // restored at boot (NVS is initialized here if wifi_manager_start() hasn't
 // already).
 void env_sensor_service_start(const EnvSensorConfig &cfg, EnvUpdateCb on_update);
+
+// Saves the current BSEC calibration state to NVS right now (on the sensor
+// task, which owns the BSEC instance) and waits up to timeout_ms for it.
+// Call before any deliberate restart so calibration progress since the
+// last periodic save isn't lost. Returns false if there's nothing to save
+// (no sensor/BSEC running) or the save failed/timed out.
+//
+// Don't call from the LVGL task: the sensor task takes the LVGL lock to
+// publish readings, so it may be unable to get to the request while the
+// LVGL task is blocked here — it'd just time out without saving.
+bool env_sensor_service_save_state_now(uint32_t timeout_ms);

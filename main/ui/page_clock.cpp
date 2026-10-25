@@ -1,5 +1,6 @@
 #include "page_clock.h"
 
+#include "page_settings.h"
 #include "seven_segment.h"
 #include "time_manager.h"
 #include "weather_icons.h"
@@ -11,6 +12,11 @@ static lv_obj_t *s_time_widget;
 static lv_obj_t *s_wifi_label;
 static lv_obj_t *s_ntp_label;
 static lv_obj_t *s_weather_icon;
+
+static void settings_btn_event_cb(lv_event_t *e) {
+    (void)e;
+    page_settings_open();
+}
 
 lv_obj_t *page_clock_create(lv_obj_t *parent) {
     lv_obj_set_style_bg_color(parent, lv_color_hex(WEATHER_ICON_BG_HEX), 0);
@@ -59,6 +65,21 @@ lv_obj_t *page_clock_create(lv_obj_t *parent) {
     lv_label_set_text(s_ntp_label, LV_SYMBOL_REFRESH " NTP: not synced");
     lv_obj_set_style_text_font(s_ntp_label, &lv_font_montserrat_16, 0);
     lv_obj_set_style_text_color(s_ntp_label, lv_color_hex(0xAAAAAA), 0);
+
+    // Settings (opens a full-screen overlay, not a tab), bottom-left corner.
+    // Created after the status row so it sits on top of it; the row's
+    // centered labels leave this corner free.
+    lv_obj_t *settings_btn = lv_button_create(parent);
+    lv_obj_set_size(settings_btn, 52, 44);
+    lv_obj_align(settings_btn, LV_ALIGN_BOTTOM_LEFT, 0, 0);
+    lv_obj_set_style_bg_color(settings_btn, lv_color_hex(0x14283A), 0);
+    lv_obj_set_style_shadow_width(settings_btn, 0, 0);
+    lv_obj_t *settings_icon = lv_label_create(settings_btn);
+    lv_label_set_text(settings_icon, LV_SYMBOL_SETTINGS);
+    lv_obj_set_style_text_font(settings_icon, &lv_font_montserrat_24, 0);
+    lv_obj_set_style_text_color(settings_icon, lv_color_hex(0x9AB4D0), 0);
+    lv_obj_center(settings_icon);
+    lv_obj_add_event_cb(settings_btn, settings_btn_event_cb, LV_EVENT_CLICKED, nullptr);
 
     return parent;
 }

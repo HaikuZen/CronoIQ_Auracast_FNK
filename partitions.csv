@@ -2,3 +2,7 @@
 nvs,      data, nvs,     0x9000,  0x6000,
 phy_init, data, phy,     0xf000,  0x1000,
 factory,  app,  factory, 0x10000, 4M,
+# Last known-good copy of /sdcard/config_crono.json (LittleFS, mounted at
+# /flash) so the device keeps its configuration when the SD card is absent.
+# Placed after factory so nvs/phy_init/factory offsets are unchanged.
+storage,  data, littlefs, 0x410000, 1M,

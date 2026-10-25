@@ -30,6 +30,17 @@ The UI is a top tab bar with four pages:
   calibration status), plus tiles for temperature, humidity, pressure, CO2
   equivalent, TVOC equivalent and gas resistance.
 
+The **⚙ button in the Clock page's bottom-left corner** opens a full-screen
+**Settings** screen, which isn't one of the tabs. It has:
+- Wi-Fi network and password, typed on an on-screen keyboard
+- timezone, from a list of common zones
+- weather units and refresh interval
+- the indoor sensor's on/off switch and temperature offset
+- an Info section: firmware version, IP address, where the config came
+  from, free memory and uptime
+
+**Save & restart** stores the changes and reboots to apply them.
+
 ## Hardware
 
 - Freenove FNK0115L_4_3_IPS (or FNK0115Q_5_0_IPS) — ESP32-S3, 800×480 RGB
@@ -108,10 +119,29 @@ without BSEC.
 ## Configuration — `config_crono.json`
 
 Copy `sdcard/config_crono.json` onto the root of a FAT32-formatted SD card,
-fill in your values, and insert it before powering the board. If the card is
-missing/unmounted or the file is absent/malformed, the app logs the reason
-and boots anyway with empty defaults (clock works off NTP-less local time,
-Wi-Fi and weather stay off) rather than refusing to start.
+fill in your values, and insert it before powering the board.
+
+**The SD card and a copy in internal flash are kept in sync, and whichever
+was changed last wins.** The flash copy lives on a LittleFS partition at
+`/flash/config_crono.json`. At every boot:
+
+1. **Card edited on a PC since the last sync:** the card wins. It's used,
+   and copied to flash.
+2. **Card unchanged since the last sync:** the flash copy wins, because it
+   may hold changes made on the Settings screen while the card was out.
+   It's written back to the card if the two differ.
+3. **No card, or its file is missing or malformed:** the last flash copy
+   is used, so the board keeps its Wi-Fi, weather, lights and sensor
+   settings without a card.
+4. **No flash copy either** (a card has never been read): the board boots
+   with empty defaults. The clock runs on unsynced local time, and Wi-Fi
+   and weather stay off.
+
+The Settings screen saves to flash, and to the card too if one is inserted.
+It only changes the keys it edits, so everything else in the file (weather
+API key, location, lights, and so on) is kept. A malformed file on the card
+is never copied, so a broken edit can't overwrite the working copy in
+flash.
 
 ```json
 {
@@ -226,6 +256,7 @@ main/
   TFT_Config.h, board.h, lvgl_display.{h,cpp}  — FNK0115 panel/touch/LVGL bring-up
   sd_card.{h,cpp}                              — SD card mount (SPI/FAT)
   app_config.{h,cpp}                           — config_crono.json parsing (cJSON)
+  config_store.{h,cpp}                         — SD ↔ flash (LittleFS) config sync, fallback, saving
   wifi_manager.{h,cpp}                         — Wi-Fi STA + reconnect
   time_manager.{h,cpp}                         — SNTP + local time formatting
   weather_service.{h,cpp}                      — Visual Crossing HTTP client + JSON parsing
@@ -239,10 +270,11 @@ main/
     page_weather.{h,cpp}       — Weather page
     page_smart_lights.{h,cpp}  — Smart Lights page
     page_environment.{h,cpp}   — Indoor (BME690 air quality) page
+    page_settings.{h,cpp}      — Settings overlay (opened from the Clock page's ⚙ button)
     ui_manager.{h,cpp}         — top tabview, ties pages + 1Hz clock tick together
 components/bsec/            — wraps an external Bosch BSEC download (not in the repo)
 sdcard/config_crono.json    — example config to copy onto the SD card
-partitions.csv              — custom partition table (4MB app, no OTA)
+partitions.csv              — custom partition table (4MB app, no OTA, 1MB LittleFS "storage")
 ```
 
 ## Design notes

@@ -1,6 +1,7 @@
 #include "wifi_manager.h"
 
 #include <atomic>
+#include <cstdio>
 #include <cstring>
 
 #include "esp_event.h"
@@ -13,6 +14,7 @@
 
 static const char *TAG = "wifi_manager";
 static std::atomic<bool> s_connected{false};
+static std::atomic<uint32_t> s_ip{0};  // esp_ip4_addr_t::addr, network byte order
 static WifiConfig s_cfg;
 
 static void event_handler(void *arg, esp_event_base_t event_base, int32_t event_id, void *event_data) {
@@ -20,12 +22,14 @@ static void event_handler(void *arg, esp_event_base_t event_base, int32_t event_
         esp_wifi_connect();
     } else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_DISCONNECTED) {
         s_connected = false;
+        s_ip = 0;
         ESP_LOGW(TAG, "Disconnected, retrying...");
         vTaskDelay(pdMS_TO_TICKS(2000));
         esp_wifi_connect();
     } else if (event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP) {
         auto *event = static_cast<ip_event_got_ip_t *>(event_data);
         ESP_LOGI(TAG, "Got IP: " IPSTR, IP2STR(&event->ip_info.ip));
+        s_ip = event->ip_info.ip.addr;
         s_connected = true;
     }
 }
@@ -69,4 +73,14 @@ void wifi_manager_start(const WifiConfig &cfg) {
 
 bool wifi_manager_is_connected(void) {
     return s_connected.load();
+}
+
+void wifi_manager_get_ip_str(char *buf, size_t len) {
+    esp_ip4_addr_t ip = {};
+    ip.addr = s_ip.load();
+    if (ip.addr == 0) {
+        snprintf(buf, len, "-");
+    } else {
+        snprintf(buf, len, IPSTR, IP2STR(&ip));
+    }
 }

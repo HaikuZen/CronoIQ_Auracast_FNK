@@ -1,5 +1,6 @@
 #include "app_config.h"
 #include "board.h"
+#include "config_store.h"
 #include "env_sensor_service.h"
 #include "esp_log.h"
 #include "esp_lvgl_port.h"
@@ -17,13 +18,12 @@ extern "C" void app_main(void) {
 
     board_init();
 
+    // SD card is the source of truth; config_store keeps a copy of the last
+    // good one in internal flash so the device still boots configured
+    // without a card. A failed SD mount is just logged here.
+    sd_card_init();
     AppConfig cfg;
-    if (sd_card_init() == ESP_OK) {
-        app_config_load(SD_MOUNT_POINT "/config_crono.json", cfg);
-    } else {
-        ESP_LOGW(TAG, "SD card not available — running with built-in defaults "
-                      "(no Wi-Fi credentials, no weather API key)");
-    }
+    config_store_load(cfg);
 
     if (lvgl_port_lock(0)) {
         ui_manager_create(cfg);

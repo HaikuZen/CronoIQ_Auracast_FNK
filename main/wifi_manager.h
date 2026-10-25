@@ -1,5 +1,7 @@
 #pragma once
 
+#include <cstddef>
+
 #include "app_config.h"
 
 // Starts the Wi-Fi station and connects using the given credentials.
@@ -8,3 +10,7 @@
 void wifi_manager_start(const WifiConfig &cfg);
 
 bool wifi_manager_is_connected(void);
+
+// Current station IPv4 address as dotted-quad text, or "-" when not
+// connected.
+void wifi_manager_get_ip_str(char *buf, size_t len);

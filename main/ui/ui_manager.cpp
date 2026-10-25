@@ -3,6 +3,7 @@
 #include "esp_lvgl_port.h"
 #include "page_clock.h"
 #include "page_environment.h"
+#include "page_settings.h"
 #include "page_smart_lights.h"
 #include "page_weather.h"
 #include "weather_icons.h"
@@ -31,6 +32,7 @@ void ui_manager_create(const AppConfig &cfg) {
     lv_obj_t *tab_lights = lv_tabview_add_tab(tabview, "Smart Lights");
     lv_obj_t *tab_env = lv_tabview_add_tab(tabview, "Indoor");
 
+    page_settings_init(cfg);
     page_clock_create(tab_clock);
     page_weather_create(tab_weather, cfg.weather);
     page_smart_lights_create(tab_lights);

@@ -84,6 +84,27 @@ kept in a file-static `s_i2c_bus` (instead of a local) and exposed through
 (`env_sensor_service.cpp`). The bus config itself is unchanged from the
 guide.
 
+**LVGL's heap is in PSRAM** (`CONFIG_LV_USE_CUSTOM_MALLOC=y` +
+`main/lvgl_mem_psram.cpp`, routing `lv_malloc()` to
+`heap_caps_*_prefer(SPIRAM, then any)`). LVGL's default builtin allocator is
+a fixed **64KB internal-RAM pool** shared by every object on every page.
+Opening the Settings overlay exhausted it on real hardware.
+`lv_malloc()` returned NULL, and `LV_ASSERT_MALLOC`'s default handler is a
+silent `while(1);`. The symptom was a task-watchdog error on `IDLE0`
+naming `taskLVGL`, with the PC parked in an allocation site
+(`lv_obj_allocate_spec_attr`), and touch looked dead.
+
+**If you ever see `taskLVGL` stuck in a `task_wdt` backtrace whose top
+frame is an LVGL allocation, suspect the LVGL heap first.** That almost
+certainly also explains the earlier "hourly forecast hang" described
+below. It was stuck inside `lv_label_set_text`, which allocates, and
+"fixing" it by creating fewer objects just shrank pool usage.
+
+The hooks are force-linked with `-u lv_malloc_core` in `main/CMakeLists.txt`,
+because liblvgl links after libmain. Verified on hardware: the Settings
+overlay opened in ~210ms with no watchdog error, using ~16KB of PSRAM and
+leaving internal RAM untouched.
+
 ## Build / flash
 
 ```sh
@@ -138,7 +159,11 @@ them from scratch:
   in `sdkconfig.defaults`), which the 16MB flash has ample room for. If you
   change `sdkconfig.defaults`, delete the generated `sdkconfig` and let
   `idf.py build` regenerate it — a stale `sdkconfig` from a previous run
-  silently keeps the old partition choice.
+  silently keeps the old partition choice. A 1MB
+  `storage` LittleFS partition at `0x410000`, after `factory`, holds the
+  config fallback copy. It was added *after* the existing partitions, so
+  their offsets didn't move and reflashing kept NVS, which holds the Wi-Fi
+  and BSEC state. Keep new partitions at the end for the same reason.
 - Also disabled: `CONFIG_LV_BUILD_EXAMPLES`/`CONFIG_LV_BUILD_DEMOS` (both
   default `y` in the managed `lvgl/lvgl` component and compile a large
   pile of example/demo widget sources this app never references — link-time
@@ -330,7 +355,13 @@ Two more things worth knowing even though they didn't cause a failure:
   independent 5-second watchdog samples spanning over a minute — not
   "slow," genuinely stuck). The log confirmed the fetch/parse/callback
   chain above (the `xTaskCreate` bug) all worked correctly this time; the
-  hang was purely in building the UI for the result. Prime suspect: each
+  hang was purely in building the UI for the result. (**Later
+  reinterpretation:** this was very likely LVGL's 64KB builtin heap
+  running out, with `lv_label_set_text` allocating and hitting
+  `LV_ASSERT_MALLOC`'s `while(1)`, rather than the CPU being overloaded.
+  See the LVGL-heap note near the top. The object-count reduction below
+  helped because it used less pool, and the heap now lives in PSRAM.)
+  Original prime suspect: each
   hour card used to call the full `weather_icon_create()`, which for a
   sun/clear icon alone builds **9 sub-objects** (a circle + 8 ray
   squares) — so 24 hour cards could synchronously create up to ~288 LVGL
@@ -422,10 +453,73 @@ Two more things worth knowing even though they didn't cause a failure:
   `sceneId` in `poll_wiz()`) is 0 when the light is in plain color/CCT
   mode, matching the sentinel.
 - **Config parsing never hard-fails.** `app_config_load` logs and returns
-  `false` on any problem (missing card, missing file, bad JSON, missing
-  sub-object) and leaves `AppConfig` at its struct-default values; `main.cpp`
-  boots regardless. Keep new config fields following that pattern —
+  `false` on a missing file or bad JSON, and a missing sub-object just
+  leaves that section at its struct defaults; `main.cpp` boots regardless.
+  Keep new config fields following that pattern —
   reasonable default + warning log, not an abort.
+- **SD card and flash copy: whichever changed last wins.**
+  `config_store_load()` (`config_store.cpp`) keeps `/sdcard/config_crono.json`
+  and `/flash/config_crono.json` (on the `storage` LittleFS partition) in
+  sync. `/flash/config_sd_snapshot.json` records what the card held at the
+  last sync.
+  - **Card bytes differ from the snapshot:** the card was edited on a PC,
+    so the card wins and is copied to flash.
+  - **Card bytes match the snapshot:** the flash copy wins, since it may
+    hold Settings-screen edits made while the card was out, and is written
+    back to the card.
+  - **No card, or an invalid card file:** the flash copy is used, then
+    defaults.
+  - Only files that `app_config_load()` accepts are ever synced.
+  - Writes happen only when the bytes differ, to save flash wear.
+  - Every write goes to a `.tmp` file first and is then renamed into
+    place. On LittleFS the rename is atomic. FAT's rename won't overwrite,
+    so the card's old file is removed first; the flash copy covers that
+    brief window.
+  - Use `stat()`, not `access()`, to test whether a file exists on
+    LittleFS. `access()` always failed there on hardware (the VFS layer
+    seems not to support it), which made the snapshot-seeding code below
+    rerun on every boot.
+  - **Upgrade seeding:** if the snapshot is missing but a flash copy
+    exists, the snapshot is seeded from the flash copy. Earlier firmware
+    always kept the two identical. Without this, the first old-card
+    reinsert after an on-screen edit would wrongly win.
+  - Confirmed on hardware so far: first-boot format + sync, the
+    unchanged-card no-op, booting without a card from the flash copy, and
+    the snapshot seeding running exactly once.
+- **Settings overlay (`ui/page_settings.cpp`).** It is opened by the ⚙
+  button at the Clock page's bottom-left, and is a full-screen child of the
+  active screen, not a tab.
+  - `config_store_save()` patches only the keys the screen edits into the
+    stored JSON (`wifi.ssid`/`password`, `ntp.timezone`, `weather.units`/
+    `update_interval_min`, `env_sensor.enabled`/`temp_offset_c`), so
+    unknown keys and the API key survive. It writes flash, and also the
+    card plus the snapshot when a card is mounted.
+  - It then reboots (`esp_restart()` from a 1.2s one-shot `lv_timer`)
+    instead of hot-applying, because every service reads its config once
+    at start.
+  - Dropdowns whose current config value isn't a preset (a custom
+    timezone, an unusual refresh interval) get a "Current: ..." entry at
+    index 0, so saving never silently changes them. Keep that if you add
+    presets.
+  - The keyboard shrinks `s_content` to the space above it and scrolls the
+    edited field into view; the footer is hidden while it's up.
+  - The overlay is deleted with `lv_obj_delete_async()` because Cancel
+    runs inside one of its own children's event callbacks.
+  - **Before the reboot**, Save & restart first calls
+    `env_sensor_service_save_state_now()`, from a one-shot `restart_task`
+    and not the LVGL task. The sensor task takes the LVGL lock to publish
+    readings, so waiting from the LVGL task could stall it until timeout.
+    That way a settings change doesn't discard BSEC calibration progress.
+    The env task waits with `ulTaskNotifyTake()` (not `vTaskDelay()`) so a
+    save request wakes it immediately. BSEC state is also saved whenever
+    IAQ accuracy reaches a new level, not only hourly.
+  - **Hardware status:**
+    - Confirmed: the overlay opens, via a temporary self-test build that
+      auto-opened it.
+    - Confirmed: `Restored BSEC calibration state` appears at boot once a
+      state has been saved.
+    - Confirmed by the user on the device: the form works end to end
+      with real taps (keyboard, dropdowns, Save & restart).
 - **SD card SPI pins are an unverified assumption**
   (`main/sd_card.h`: MISO=13 MOSI=11 SCLK=12 CS=10, chosen because they're
   the only GPIOs the FNK0115 bring-up guide's panel/touch/backlight wiring
